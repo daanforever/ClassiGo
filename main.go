@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
@@ -23,9 +24,14 @@ var imageExtensions = map[string]bool{
 
 func main() {
 	// Parse command-line arguments
+	if len(os.Args) < 2 {
+		log.Fatalf("Usage: %s <model-name> [directory]\nExample: %s glm4-v-flash ./images", filepath.Base(os.Args[0]), filepath.Base(os.Args[0]))
+	}
+
+	modelName := os.Args[1]
 	directory := "."
-	if len(os.Args) > 1 {
-		directory = os.Args[1]
+	if len(os.Args) > 2 {
+		directory = os.Args[2]
 	}
 
 	// Validate directory
@@ -37,6 +43,7 @@ func main() {
 		log.Fatalf("Path '%s' is not a directory", directory)
 	}
 
+	fmt.Printf("Using model: %s\n", modelName)
 	fmt.Printf("Processing images in directory: %s\n\n", directory)
 
 	// Initialize Ollama client
@@ -79,7 +86,7 @@ func main() {
 		imagePath := filepath.Join(directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath); err != nil {
+		if err := processImage(client, imagePath, modelName); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -94,7 +101,10 @@ func main() {
 	fmt.Printf("Success: %d | Errors: %d | Total: %d\n", successCount, errorCount, len(imageFiles))
 }
 
-func processImage(client *api.Client, imagePath string) error {
+func processImage(client *api.Client, imagePath string, modelName string) error {
+	// Start timing
+	startTime := time.Now()
+
 	// Read image file
 	imgData, err := os.ReadFile(imagePath)
 	if err != nil {
@@ -114,7 +124,7 @@ func processImage(client *api.Client, imagePath string) error {
 
 	// Prepare request
 	req := &api.GenerateRequest{
-		Model:  "glm4-v-flash",
+		Model:  modelName,
 		Prompt: "Напиши от 10 до 30 слов описывающих изображение",
 		Images: []api.ImageData{imgData},
 	}
@@ -140,6 +150,8 @@ func processImage(client *api.Client, imagePath string) error {
 		return fmt.Errorf("failed to write to output file: %w", err)
 	}
 
-	fmt.Printf("  ✓ Saved: %s\n", filepath.Base(txtPath))
+	// Calculate elapsed time
+	elapsed := time.Since(startTime).Seconds()
+	fmt.Printf("  ✓ Saved: %s (%.2f sec)\n", filepath.Base(txtPath), elapsed)
 	return nil
 }

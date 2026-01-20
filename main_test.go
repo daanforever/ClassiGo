@@ -210,15 +210,15 @@ func TestScanDirectory(t *testing.T) {
 		if file.IsDir() {
 			continue
 		}
-		ext := filepath.Ext(file.Name())
+		ext := strings.ToLower(filepath.Ext(file.Name()))
 		if imageExtensions[ext] {
 			imageCount++
 		}
 	}
 
-	// We expect 3 image files (.jpg, .png, .gif)
-	// .JPEG won't match because our map has lowercase extensions only
-	expectedCount := 3
+	// We expect 4 image files (.jpg, .png, .gif, .jpeg)
+	// Now .JPEG will match because we convert to lowercase
+	expectedCount := 4
 	if imageCount != expectedCount {
 		t.Errorf("Expected %d image files, found %d", expectedCount, imageCount)
 	}
