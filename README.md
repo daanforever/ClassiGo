@@ -45,45 +45,63 @@ Before using ClassiGo, ensure you have:
 
 ## Usage
 
+### Command Syntax
+
+```bash
+classigo <model-name> <prompt-file> [directory]
+```
+
+**Parameters:**
+- `<model-name>` - Name of the Ollama vision model to use (e.g., `glm4-v-flash`)
+- `<prompt-file>` - Path to a text file containing the prompt for image description
+- `[directory]` - (Optional) Directory containing images. Defaults to current directory if not specified
+
 ### Basic Usage
 
-Process images in the current directory:
-```bash
-go run main.go
-```
+1. Create a prompt file (e.g., `prompt.txt`):
+   ```
+   Напиши от 10 до 30 слов описывающих изображение
+   ```
 
-Or if you built the executable:
-```bash
-./classigo
-```
+2. Process images in the current directory:
+   ```bash
+   go run main.go glm4-v-flash ./prompt.txt
+   ```
+
+   Or if you built the executable:
+   ```bash
+   ./classigo glm4-v-flash ./prompt.txt
+   ```
 
 ### Specify a Directory
 
 Process images in a specific directory:
 ```bash
-go run main.go /path/to/images
+go run main.go glm4-v-flash ./prompt.txt /path/to/images
 ```
 
 Or:
 ```bash
-./classigo /path/to/images
+./classigo glm4-v-flash ./prompt.txt /path/to/images
 ```
 
 ### Example Output
 
 ```
+Using model: glm4-v-flash
+Using prompt: Напиши от 10 до 30 слов описывающих изображение
 Processing images in directory: ./photos
 
 Found 3 image(s) to process.
 
 [1/3] Processing: sunset.jpg...
-  ✓ Saved: sunset.txt
+  ✓ Saved: sunset.txt (2.34 sec)
 
 [2/3] Processing: cat.png...
-  ✓ Saved: cat.txt
+  ✓ Saved: cat.txt (1.87 sec)
 
 [3/3] Processing: landscape.jpg...
-  ✓ Saved: landscape.txt
+  ✓ Saved: landscape.txt (2.15 sec)
 
 ==================================================
 Processing complete!
@@ -92,34 +110,51 @@ Success: 3 | Errors: 0 | Total: 3
 
 ## How It Works
 
-1. Scans the specified directory for image files
-2. For each image:
+1. Reads the prompt from the specified prompt file
+2. Scans the specified directory for image files
+3. For each image:
    - Reads the image file
-   - Sends it to Ollama's `glm4-v-flash` model
-   - Requests a description in Russian (10-30 words)
-   - Saves the description to a `.txt` file with the same name as the image
-3. Displays progress and summary statistics
+   - Sends it to the specified Ollama vision model with the custom prompt
+   - Saves the model's response to a `.txt` file with the same name as the image
+4. Displays progress, timing, and summary statistics
 
 ## Configuration
 
-### Changing the Model
+### Using Different Models
 
-To use a different Ollama model, edit `main.go` and change the model name:
+Simply specify a different model name when running the application:
 
-```go
-req := &api.GenerateRequest{
-    Model:  "your-model-name",  // Change this
-    Prompt: "Напиши от 10 до 30 слов описывающих изображение",
-    Images: []api.ImageData{imgData},
-}
+```bash
+./classigo llava ./prompt.txt ./images
 ```
 
-### Changing the Prompt
+Make sure the model is installed in Ollama:
+```bash
+ollama pull llava
+```
 
-To modify the description prompt, edit the `Prompt` field in the request:
+### Customizing Prompts
 
-```go
-Prompt: "Your custom prompt here",
+Create different prompt files for different use cases:
+
+**prompt_detailed.txt:**
+```
+Provide a detailed description of this image in 50-100 words, including colors, objects, and mood.
+```
+
+**prompt_short.txt:**
+```
+Describe this image in one sentence.
+```
+
+**prompt_russian.txt:**
+```
+Напиши от 10 до 30 слов описывающих изображение
+```
+
+Then use them as needed:
+```bash
+./classigo glm4-v-flash ./prompt_detailed.txt ./images
 ```
 
 ### Adding More Image Formats

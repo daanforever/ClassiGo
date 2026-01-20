@@ -60,16 +60,24 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 ### Basic usage
 ```powershell
-.\classigo.exe <model-name> [directory]
+.\classigo.exe <model-name> <prompt-file> [directory]
 ```
+
+### Parameters
+- `<model-name>` - Name of the Ollama vision model (e.g., glm4-v-flash)
+- `<prompt-file>` - Path to text file containing the prompt for image description
+- `[directory]` - (Optional) Directory with images, defaults to current directory
 
 ### Examples
 ```powershell
 # Process images in current directory
-.\classigo.exe glm4-v-flash .
+.\classigo.exe glm4-v-flash .\prompt.txt .
 
 # Process images in specified directory
-.\classigo.exe glm4-v-flash ./images
+.\classigo.exe glm4-v-flash .\prompt.txt .\images
+
+# Use custom prompt file
+.\classigo.exe llava .\custom_prompt.txt .\photos
 ```
 
 ## Project Structure

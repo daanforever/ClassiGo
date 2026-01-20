@@ -24,14 +24,25 @@ var imageExtensions = map[string]bool{
 
 func main() {
 	// Parse command-line arguments
-	if len(os.Args) < 2 {
-		log.Fatalf("Usage: %s <model-name> [directory]\nExample: %s glm4-v-flash ./images", filepath.Base(os.Args[0]), filepath.Base(os.Args[0]))
+	if len(os.Args) < 3 {
+		log.Fatalf("Usage: %s <model-name> <prompt-file> [directory]\nExample: %s glm4-v-flash ./prompt.txt ./images", filepath.Base(os.Args[0]), filepath.Base(os.Args[0]))
 	}
 
 	modelName := os.Args[1]
+	promptFile := os.Args[2]
 	directory := "."
-	if len(os.Args) > 2 {
-		directory = os.Args[2]
+	if len(os.Args) > 3 {
+		directory = os.Args[3]
+	}
+
+	// Read prompt from file
+	promptData, err := os.ReadFile(promptFile)
+	if err != nil {
+		log.Fatalf("Error reading prompt file '%s': %v", promptFile, err)
+	}
+	prompt := strings.TrimSpace(string(promptData))
+	if prompt == "" {
+		log.Fatalf("Prompt file '%s' is empty", promptFile)
 	}
 
 	// Validate directory
@@ -44,6 +55,7 @@ func main() {
 	}
 
 	fmt.Printf("Using model: %s\n", modelName)
+	fmt.Printf("Using prompt: %s\n", prompt)
 	fmt.Printf("Processing images in directory: %s\n\n", directory)
 
 	// Initialize Ollama client
@@ -86,7 +98,7 @@ func main() {
 		imagePath := filepath.Join(directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath, modelName); err != nil {
+		if err := processImage(client, imagePath, modelName, prompt); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -101,7 +113,7 @@ func main() {
 	fmt.Printf("Success: %d | Errors: %d | Total: %d\n", successCount, errorCount, len(imageFiles))
 }
 
-func processImage(client *api.Client, imagePath string, modelName string) error {
+func processImage(client *api.Client, imagePath string, modelName string, prompt string) error {
 	// Start timing
 	startTime := time.Now()
 
@@ -125,7 +137,7 @@ func processImage(client *api.Client, imagePath string, modelName string) error 
 	// Prepare request
 	req := &api.GenerateRequest{
 		Model:  modelName,
-		Prompt: "Напиши от 10 до 30 слов описывающих изображение",
+		Prompt: prompt,
 		Images: []api.ImageData{imgData},
 	}
 
