@@ -20,6 +20,7 @@ const (
 	ModeDefault ProcessingMode = iota // Create/overwrite txt files
 	ModeAdd                           // Append to existing txt files
 	ModeUpdate                        // Update existing descriptions
+	ModeCreate                        // Create txt files only if they don't exist
 )
 
 // Supported image extensions
@@ -36,12 +37,23 @@ func main() {
 	// Define flags
 	addMode := flag.Bool("add", false, "Append new description to existing txt files (skip if file doesn't exist)")
 	updateMode := flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)")
+	createMode := flag.Bool("create", false, "Create description files only when txt file doesn't exist")
 	seed := flag.Int("seed", 42, "Random seed for LLM (default: 42)")
 	flag.Parse()
 
 	// Validate flags are mutually exclusive
-	if *addMode && *updateMode {
-		log.Fatalf("Error: --add and --update flags cannot be used together")
+	modesCount := 0
+	if *addMode {
+		modesCount++
+	}
+	if *updateMode {
+		modesCount++
+	}
+	if *createMode {
+		modesCount++
+	}
+	if modesCount > 1 {
+		log.Fatalf("Error: --add, --update, and --create flags cannot be used together")
 	}
 
 	// Determine processing mode
@@ -50,20 +62,24 @@ func main() {
 		mode = ModeAdd
 	} else if *updateMode {
 		mode = ModeUpdate
+	} else if *createMode {
+		mode = ModeCreate
 	}
 
 	// Parse positional arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update] [--seed N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create] [--seed N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Modes:\n")
 		fmt.Fprintf(os.Stderr, "  (default)  Create/overwrite description files\n")
 		fmt.Fprintf(os.Stderr, "  --add      Append new description to existing txt files (skip if file doesn't exist)\n")
-		fmt.Fprintf(os.Stderr, "  --update   Update existing descriptions using LLM (skip if file doesn't exist)\n\n")
+		fmt.Fprintf(os.Stderr, "  --update   Update existing descriptions using LLM (skip if file doesn't exist)\n")
+		fmt.Fprintf(os.Stderr, "  --create   Create description files only when txt file doesn't exist\n\n")
 		fmt.Fprintf(os.Stderr, "Seed:\n")
 		fmt.Fprintf(os.Stderr, "  --seed N  Random seed for LLM (default: 42)\n\n")
 		fmt.Fprintf(os.Stderr, "Example: %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Example: %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Example: %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		os.Exit(1)
 	}
 
@@ -103,6 +119,8 @@ func main() {
 		fmt.Printf("Mode: Append to existing descriptions\n\n")
 	case ModeUpdate:
 		fmt.Printf("Mode: Update existing descriptions\n\n")
+	case ModeCreate:
+		fmt.Printf("Mode: Create only when txt file doesn't exist\n\n")
 	default:
 		fmt.Printf("Mode: Create/overwrite descriptions\n\n")
 	}
@@ -151,11 +169,35 @@ func main() {
 		if skippedCount > 0 {
 			fmt.Printf("Skipped %d image(s) without existing txt files.\n", skippedCount)
 		}
+	} else if mode == ModeCreate {
+		filteredFiles := []string{}
+		skippedCount := 0
+		for _, filename := range imageFiles {
+			imagePath := filepath.Join(directory, filename)
+			ext := filepath.Ext(imagePath)
+			txtPath := strings.TrimSuffix(imagePath, ext) + ".txt"
+
+			// Check if corresponding txt file exists
+			if _, err := os.Stat(txtPath); err != nil {
+				// File doesn't exist, include it
+				filteredFiles = append(filteredFiles, filename)
+			} else {
+				// File exists, skip it
+				skippedCount++
+			}
+		}
+		imageFiles = filteredFiles
+
+		if skippedCount > 0 {
+			fmt.Printf("Skipped %d image(s) with existing txt files.\n", skippedCount)
+		}
 	}
 
 	if len(imageFiles) == 0 {
 		if mode == ModeAdd || mode == ModeUpdate {
 			fmt.Println("No image files with existing txt files found in the directory.")
+		} else if mode == ModeCreate {
+			fmt.Println("No image files without existing txt files found in the directory.")
 		} else {
 			fmt.Println("No image files found in the directory.")
 		}
