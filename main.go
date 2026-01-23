@@ -36,6 +36,7 @@ func main() {
 	// Define flags
 	addMode := flag.Bool("add", false, "Append new description to existing txt files (skip if file doesn't exist)")
 	updateMode := flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)")
+	seed := flag.Int("seed", 42, "Random seed for LLM (default: 42)")
 	flag.Parse()
 
 	// Validate flags are mutually exclusive
@@ -54,11 +55,13 @@ func main() {
 	// Parse positional arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update] [--seed N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Modes:\n")
 		fmt.Fprintf(os.Stderr, "  (default)  Create/overwrite description files\n")
 		fmt.Fprintf(os.Stderr, "  --add      Append new description to existing txt files (skip if file doesn't exist)\n")
 		fmt.Fprintf(os.Stderr, "  --update   Update existing descriptions using LLM (skip if file doesn't exist)\n\n")
+		fmt.Fprintf(os.Stderr, "Seed:\n")
+		fmt.Fprintf(os.Stderr, "  --seed N  Random seed for LLM (default: 42)\n\n")
 		fmt.Fprintf(os.Stderr, "Example: %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Example: %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		os.Exit(1)
@@ -171,7 +174,7 @@ func main() {
 		imagePath := filepath.Join(directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath, modelName, prompt, mode); err != nil {
+		if err := processImage(client, imagePath, modelName, prompt, mode, *seed); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -186,7 +189,7 @@ func main() {
 	fmt.Printf("Success: %d | Errors: %d | Total: %d\n", successCount, errorCount, len(imageFiles))
 }
 
-func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode) error {
+func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode, seed int) error {
 	// Start timing
 	startTime := time.Now()
 
@@ -210,7 +213,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Modify prompt to include existing description as context
-		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nPlease update and improve the above description.", prompt, strings.TrimSpace(string(existingContent)))
+		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nUpdate, improve and format the above description.", prompt, strings.TrimSpace(string(existingContent)))
 	}
 
 	// Prepare request
@@ -218,36 +221,63 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		Model:  modelName,
 		Prompt: finalPrompt,
 		Images: []api.ImageData{imgData},
+		Options: map[string]interface{}{
+			"seed": seed,
+		},
 	}
 
-	// Collect response
-	var response strings.Builder
-
-	respFunc := func(resp api.GenerateResponse) error {
-		response.WriteString(resp.Response)
-		return nil
-	}
-
-	// Call Ollama API
+	// Call Ollama API with retry logic for empty responses
 	ctx := context.Background()
-	err = client.Generate(ctx, req, respFunc)
-	if err != nil {
-		return fmt.Errorf("failed to generate description: %w", err)
+	var response strings.Builder
+	maxAttempts := 2
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Reset response for each attempt
+		response.Reset()
+
+		respFunc := func(resp api.GenerateResponse) error {
+			response.WriteString(resp.Response)
+			return nil
+		}
+
+		err = client.Generate(ctx, req, respFunc)
+		if err != nil {
+			return fmt.Errorf("failed to generate description: %w", err)
+		}
+
+		// Check if response is empty
+		responseText := strings.TrimSpace(response.String())
+		if responseText != "" {
+			// Success - got a non-empty response
+			break
+		}
+
+		// Empty response received
+		if attempt < maxAttempts {
+			fmt.Printf("  ⚠ Empty response received, retrying...\n")
+		} else {
+			return fmt.Errorf("received empty response from LLM after %d attempts", maxAttempts)
+		}
+	}
+
+	// Final validation: ensure response is not empty
+	finalResponse := strings.TrimSpace(response.String())
+	if finalResponse == "" {
+		return fmt.Errorf("cannot write file: response is empty")
 	}
 
 	// Write response based on mode
-	var outFile *os.File
 	switch mode {
 	case ModeAdd:
 		// Open file in append mode
-		outFile, err = os.OpenFile(txtPath, os.O_APPEND|os.O_WRONLY, 0644)
+		outFile, err := os.OpenFile(txtPath, os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open output file for appending: %w", err)
 		}
-		defer outFile.Close()
 
 		// Write separator and new description
 		_, err = outFile.WriteString("\n\n" + response.String())
+		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to append to output file: %w", err)
 		}
@@ -257,13 +287,13 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 
 	case ModeUpdate:
 		// Overwrite file with updated description
-		outFile, err = os.Create(txtPath)
+		outFile, err := os.Create(txtPath)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer outFile.Close()
 
 		_, err = outFile.WriteString(response.String())
+		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to write to output file: %w", err)
 		}
@@ -273,13 +303,13 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 
 	default: // ModeDefault
 		// Create or truncate output file
-		outFile, err = os.Create(txtPath)
+		outFile, err := os.Create(txtPath)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer outFile.Close()
 
 		_, err = outFile.WriteString(response.String())
+		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to write to output file: %w", err)
 		}
