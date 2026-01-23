@@ -5,8 +5,9 @@ ClassiGo is a Go application that automatically generates descriptive text for i
 ## Features
 
 - 🖼️ Processes multiple image formats (JPG, JPEG, PNG, GIF, BMP, WEBP)
-- 🤖 Uses Ollama's `glm4-v-flash` vision model for image description
+- 🤖 Uses Ollama's vision models for image description
 - 📝 Saves descriptions to `.txt` files alongside images
+- 🔄 Three processing modes: create, append, and update
 - ⚡ Batch processing with progress tracking
 - 🛡️ Robust error handling and informative logging
 - 🌍 Supports Russian language prompts and responses
@@ -48,13 +49,39 @@ Before using ClassiGo, ensure you have:
 ### Command Syntax
 
 ```bash
-classigo <model-name> <prompt-file> [directory]
+classigo [--add | --update] <model-name> <prompt-file> [directory]
 ```
+
+**Flags:**
+- `--add` - Append new description to existing txt files (skip images without txt files)
+- `--update` - Update existing descriptions using LLM (skip images without txt files)
+- (no flag) - Create/overwrite description files (default behavior)
 
 **Parameters:**
 - `<model-name>` - Name of the Ollama vision model to use (e.g., `glm4-v-flash`)
 - `<prompt-file>` - Path to a text file containing the prompt for image description
 - `[directory]` - (Optional) Directory containing images. Defaults to current directory if not specified
+
+### Processing Modes
+
+ClassiGo supports three different processing modes:
+
+1. **Default Mode** (no flags)
+   - Creates new description files or overwrites existing ones
+   - Processes all image files in the directory
+   - Best for: Initial description generation or complete regeneration
+
+2. **Add Mode** (`--add` flag)
+   - Appends new descriptions to existing txt files
+   - Skips images that don't have corresponding txt files
+   - Adds a separator before the new description
+   - Best for: Adding alternative descriptions or multiple perspectives
+
+3. **Update Mode** (`--update` flag)
+   - Reads existing descriptions and asks the LLM to improve them
+   - Skips images that don't have corresponding txt files
+   - Includes the existing description as context in the prompt
+   - Best for: Refining or improving existing descriptions
 
 ### Basic Usage
 
@@ -85,12 +112,42 @@ Or:
 ./classigo glm4-v-flash ./prompt.txt /path/to/images
 ```
 
+### Using Add Mode
+
+To append new descriptions to existing txt files:
+```bash
+./classigo --add glm4-v-flash ./prompt.txt ./images
+```
+
+This will:
+- Only process images that already have corresponding txt files
+- Generate a new description using the prompt
+- Append the new description to the existing txt file with a separator
+- Skip any images without txt files
+
+### Using Update Mode
+
+To update and improve existing descriptions:
+```bash
+./classigo --update glm4-v-flash ./prompt.txt ./images
+```
+
+This will:
+- Only process images that already have corresponding txt files
+- Read the existing description from each txt file
+- Send both the image and existing description to the LLM
+- Ask the LLM to update and improve the description
+- Overwrite the txt file with the improved description
+- Skip any images without txt files
+
 ### Example Output
 
+**Default Mode:**
 ```
 Using model: glm4-v-flash
 Using prompt: Напиши от 10 до 30 слов описывающих изображение
 Processing images in directory: ./photos
+Mode: Create/overwrite descriptions
 
 Found 3 image(s) to process.
 
@@ -108,8 +165,49 @@ Processing complete!
 Success: 3 | Errors: 0 | Total: 3
 ```
 
+**Add Mode:**
+```
+Using model: glm4-v-flash
+Using prompt: Напиши от 10 до 30 слов описывающих изображение
+Processing images in directory: ./photos
+Mode: Append to existing descriptions
+
+Found 2 image(s) to process.
+
+[1/2] Processing: sunset.jpg...
+  ✓ Appended: sunset.txt (2.10 sec)
+
+[2/2] Processing: cat.png...
+  ✓ Appended: cat.txt (1.95 sec)
+
+==================================================
+Processing complete!
+Success: 2 | Errors: 0 | Total: 2
+```
+
+**Update Mode:**
+```
+Using model: glm4-v-flash
+Using prompt: Напиши от 10 до 30 слов описывающих изображение
+Processing images in directory: ./photos
+Mode: Update existing descriptions
+
+Found 2 image(s) to process.
+
+[1/2] Processing: sunset.jpg...
+  ✓ Updated: sunset.txt (2.45 sec)
+
+[2/2] Processing: cat.png...
+  ✓ Updated: cat.txt (2.20 sec)
+
+==================================================
+Processing complete!
+Success: 2 | Errors: 0 | Total: 2
+```
+
 ## How It Works
 
+**Default Mode:**
 1. Reads the prompt from the specified prompt file
 2. Scans the specified directory for image files
 3. For each image:
@@ -117,6 +215,26 @@ Success: 3 | Errors: 0 | Total: 3
    - Sends it to the specified Ollama vision model with the custom prompt
    - Saves the model's response to a `.txt` file with the same name as the image
 4. Displays progress, timing, and summary statistics
+
+**Add Mode (`--add`):**
+1. Reads the prompt from the specified prompt file
+2. Scans the specified directory for image files
+3. Filters images to only those with existing txt files
+4. For each filtered image:
+   - Reads the image file
+   - Generates a new description using the prompt
+   - Appends the new description to the existing txt file (with separator)
+5. Displays progress, timing, and summary statistics
+
+**Update Mode (`--update`):**
+1. Reads the prompt from the specified prompt file
+2. Scans the specified directory for image files
+3. Filters images to only those with existing txt files
+4. For each filtered image:
+   - Reads the image file and existing txt file
+   - Sends both to the LLM with modified prompt asking to improve the description
+   - Overwrites the txt file with the updated description
+5. Displays progress, timing, and summary statistics
 
 ## Configuration
 
