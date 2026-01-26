@@ -60,7 +60,7 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 ### Basic usage
 ```powershell
-.\classigo.exe [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]
+.\classigo.exe [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
 ```
 
 ### Flags
@@ -73,6 +73,7 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 ### Options
 - `--seed N` - Random seed for LLM (default: 42)
 - `--server URL` - Ollama server URL with port (e.g., http://localhost:11434)
+- `--timeout N` - Response timeout for Ollama in seconds (default: 0 = no timeout)
 
 ### Parameters
 - `<model-name>` - Name of the Ollama vision model (e.g., glm4-v-flash)
@@ -98,6 +99,12 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 # Use custom seed
 .\classigo.exe --seed 123 glm4-v-flash .\prompt.txt .\images
+
+# Use timeout to prevent hanging
+.\classigo.exe --timeout 60 glm4-v-flash .\prompt.txt .\images
+
+# Combine timeout with other flags
+.\classigo.exe --timeout 120 --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
 ```
 
 ## Project Structure

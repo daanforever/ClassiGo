@@ -26,6 +26,17 @@ const (
 	ModeCheck                         // Check existing descriptions
 )
 
+// Config holds the application configuration
+type Config struct {
+	Mode      ProcessingMode
+	ModelName string
+	Prompt    string
+	Directory string
+	Seed      int
+	ServerURL string
+	Timeout   int
+}
+
 // Supported image extensions
 var imageExtensions = map[string]bool{
 	".jpg":  true,
@@ -36,7 +47,41 @@ var imageExtensions = map[string]bool{
 	".webp": true,
 }
 
-func main() {
+// getServerURL resolves the Ollama server URL from custom flag or environment
+func getServerURL(customServer string) string {
+	if customServer != "" {
+		return customServer
+	}
+
+	// Get from environment
+	ollamaHost := os.Getenv("OLLAMA_HOST")
+	if ollamaHost == "" {
+		ollamaHost = "http://127.0.0.1:11434"
+	}
+	return ollamaHost
+}
+
+// createOllamaClient initializes an Ollama client with the specified server and timeout
+func createOllamaClient(serverURL string, timeoutSecs int) (*api.Client, error) {
+	// Create HTTP client with timeout if specified
+	httpClient := &http.Client{}
+	if timeoutSecs > 0 {
+		httpClient.Timeout = time.Duration(timeoutSecs) * time.Second
+	}
+
+	// Parse server URL
+	baseURL, err := url.Parse(serverURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid server URL '%s': %w", serverURL, err)
+	}
+
+	// Create and return client
+	client := api.NewClient(baseURL, httpClient)
+	return client, nil
+}
+
+// parseConfig parses command-line flags and arguments, returning a Config struct
+func parseConfig() (*Config, error) {
 	// Define flags
 	addMode := flag.Bool("add", false, "Append new description to existing txt files (skip if file doesn't exist)")
 	updateMode := flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)")
@@ -44,6 +89,7 @@ func main() {
 	checkMode := flag.Bool("check", false, "Check existing descriptions using LLM and output feedback to stdout")
 	seed := flag.Int("seed", 42, "Random seed for LLM (default: 42)")
 	server := flag.String("server", "", "Ollama server URL with port (e.g., http://localhost:11434)")
+	timeout := flag.Int("timeout", 0, "Response timeout for Ollama in seconds (default: 0 = no timeout)")
 	flag.Parse()
 
 	// Validate flags are mutually exclusive
@@ -61,7 +107,7 @@ func main() {
 		modesCount++
 	}
 	if modesCount > 1 {
-		log.Fatalf("Error: --add, --update, --create, and --check flags cannot be used together")
+		return nil, fmt.Errorf("--add, --update, --create, and --check flags cannot be used together")
 	}
 
 	// Determine processing mode
@@ -79,7 +125,7 @@ func main() {
 	// Parse positional arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Modes:\n")
 		fmt.Fprintf(os.Stderr, "  (default)  Create/overwrite description files\n")
 		fmt.Fprintf(os.Stderr, "  --add      Append new description to existing txt files (skip if file doesn't exist)\n")
@@ -88,13 +134,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --check    Check existing descriptions using LLM (skip if file doesn't exist)\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		fmt.Fprintf(os.Stderr, "  --seed N       Random seed for LLM (default: 42)\n")
-		fmt.Fprintf(os.Stderr, "  --server URL   Ollama server URL with port (e.g., http://localhost:11434)\n\n")
+		fmt.Fprintf(os.Stderr, "  --server URL   Ollama server URL with port (e.g., http://localhost:11434)\n")
+		fmt.Fprintf(os.Stderr, "  --timeout N    Response timeout for Ollama in seconds (default: 0 = no timeout)\n\n")
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "  %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "  %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "  %s --check glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "  %s --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --timeout 60 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		os.Exit(1)
 	}
 
@@ -108,28 +156,44 @@ func main() {
 	// Read prompt from file
 	promptData, err := os.ReadFile(promptFile)
 	if err != nil {
-		log.Fatalf("Error reading prompt file '%s': %v", promptFile, err)
+		return nil, fmt.Errorf("error reading prompt file '%s': %w", promptFile, err)
 	}
 	prompt := strings.TrimSpace(string(promptData))
 	if prompt == "" {
-		log.Fatalf("Prompt file '%s' is empty", promptFile)
+		return nil, fmt.Errorf("prompt file '%s' is empty", promptFile)
 	}
 
 	// Validate directory
 	dirInfo, err := os.Stat(directory)
 	if err != nil {
-		log.Fatalf("Error accessing directory '%s': %v", directory, err)
+		return nil, fmt.Errorf("error accessing directory '%s': %w", directory, err)
 	}
 	if !dirInfo.IsDir() {
-		log.Fatalf("Path '%s' is not a directory", directory)
+		return nil, fmt.Errorf("path '%s' is not a directory", directory)
 	}
 
-	fmt.Printf("Using model: %s\n", modelName)
-	fmt.Printf("Using prompt: %s\n", prompt)
-	fmt.Printf("Processing images in directory: %s\n", directory)
+	// Get server URL
+	serverURL := getServerURL(*server)
+
+	return &Config{
+		Mode:      mode,
+		ModelName: modelName,
+		Prompt:    prompt,
+		Directory: directory,
+		Seed:      *seed,
+		ServerURL: serverURL,
+		Timeout:   *timeout,
+	}, nil
+}
+
+// displayProcessingInfo displays configuration information to the user
+func displayProcessingInfo(config *Config) {
+	fmt.Printf("Using model: %s\n", config.ModelName)
+	fmt.Printf("Using prompt: %s\n", config.Prompt)
+	fmt.Printf("Processing images in directory: %s\n", config.Directory)
 
 	// Display mode
-	switch mode {
+	switch config.Mode {
 	case ModeAdd:
 		fmt.Printf("Mode: Append to existing descriptions\n\n")
 	case ModeUpdate:
@@ -141,30 +205,14 @@ func main() {
 	default:
 		fmt.Printf("Mode: Create/overwrite descriptions\n\n")
 	}
+}
 
-	// Initialize Ollama client
-	var client *api.Client
-	
-	if *server != "" {
-		// Use custom server URL
-		serverURL, err := url.Parse(*server)
-		if err != nil {
-			log.Fatalf("Invalid server URL '%s': %v", *server, err)
-		}
-		client = api.NewClient(serverURL, http.DefaultClient)
-	} else {
-		// Use default environment-based configuration
-		var err error
-		client, err = api.ClientFromEnvironment()
-		if err != nil {
-			log.Fatalf("Failed to create Ollama client: %v\nMake sure Ollama is installed and running.", err)
-		}
-	}
-
+// findImageFiles scans directory for image files and filters based on mode
+func findImageFiles(directory string, mode ProcessingMode) ([]string, error) {
 	// Scan directory for image files
 	files, err := os.ReadDir(directory)
 	if err != nil {
-		log.Fatalf("Failed to read directory: %v", err)
+		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
 	imageFiles := []string{}
@@ -179,7 +227,8 @@ func main() {
 	}
 
 	// Filter images based on mode
-	if mode == ModeAdd || mode == ModeUpdate || mode == ModeCheck {
+	switch mode {
+	case ModeAdd, ModeUpdate, ModeCheck:
 		filteredFiles := []string{}
 		skippedCount := 0
 		for _, filename := range imageFiles {
@@ -199,7 +248,7 @@ func main() {
 		if skippedCount > 0 {
 			fmt.Printf("Skipped %d image(s) without existing txt files.\n", skippedCount)
 		}
-	} else if mode == ModeCreate {
+	case ModeCreate:
 		filteredFiles := []string{}
 		skippedCount := 0
 		for _, filename := range imageFiles {
@@ -223,30 +272,18 @@ func main() {
 		}
 	}
 
-	if len(imageFiles) == 0 {
-		if mode == ModeAdd || mode == ModeUpdate || mode == ModeCheck {
-			fmt.Println("No image files with existing txt files found in the directory.")
-		} else if mode == ModeCreate {
-			fmt.Println("No image files without existing txt files found in the directory.")
-		} else {
-			fmt.Println("No image files found in the directory.")
-		}
-		return
-	}
+	return imageFiles, nil
+}
 
-	fmt.Printf("Found %d image(s) to process.\n\n", len(imageFiles))
-
-	// Process each image
-	successCount := 0
-	errorCount := 0
-
+// processAllImages processes all image files and returns success/error counts
+func processAllImages(client *api.Client, config *Config, imageFiles []string) (successCount, errorCount int) {
 	for i, filename := range imageFiles {
 		fmt.Printf("[%d/%d] Processing: %s...\n", i+1, len(imageFiles), filename)
 
-		imagePath := filepath.Join(directory, filename)
+		imagePath := filepath.Join(config.Directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath, modelName, prompt, mode, *seed); err != nil {
+		if err := processImage(client, imagePath, config.ModelName, config.Prompt, config.Mode, config.Seed); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -255,10 +292,61 @@ func main() {
 		fmt.Println()
 	}
 
-	// Print summary
+	return successCount, errorCount
+}
+
+// displayNoImagesMessage displays appropriate message when no images found
+func displayNoImagesMessage(mode ProcessingMode) {
+	if mode == ModeAdd || mode == ModeUpdate || mode == ModeCheck {
+		fmt.Println("No image files with existing txt files found in the directory.")
+	} else if mode == ModeCreate {
+		fmt.Println("No image files without existing txt files found in the directory.")
+	} else {
+		fmt.Println("No image files found in the directory.")
+	}
+}
+
+// displaySummary displays processing summary statistics
+func displaySummary(successCount, errorCount, total int) {
 	fmt.Println(strings.Repeat("=", 50))
 	fmt.Printf("Processing complete!\n")
-	fmt.Printf("Success: %d | Errors: %d | Total: %d\n", successCount, errorCount, len(imageFiles))
+	fmt.Printf("Success: %d | Errors: %d | Total: %d\n", successCount, errorCount, total)
+}
+
+func main() {
+	// Parse configuration
+	config, err := parseConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Display processing info
+	displayProcessingInfo(config)
+
+	// Initialize Ollama client
+	client, err := createOllamaClient(config.ServerURL, config.Timeout)
+	if err != nil {
+		log.Fatalf("Failed to create Ollama client: %v\nMake sure Ollama is installed and running.", err)
+	}
+
+	// Find images to process
+	imageFiles, err := findImageFiles(config.Directory, config.Mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(imageFiles) == 0 {
+		displayNoImagesMessage(config.Mode)
+		return
+	}
+
+	fmt.Printf("Found %d image(s) to process.\n\n", len(imageFiles))
+
+	// Process all images
+	successCount, errorCount := processAllImages(client, config, imageFiles)
+
+	// Display summary
+	displaySummary(successCount, errorCount, len(imageFiles))
 }
 
 func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode, seed int) error {
@@ -285,7 +373,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Modify prompt to include existing description as context
-		finalPrompt = fmt.Sprintf("%s\n\nRead a text bellow. Analize any issues and edit the text. NEVER OUTPUT original text.\n\n%s\n\n", prompt, strings.TrimSpace(string(existingContent)))
+		finalPrompt = fmt.Sprintf("%s\n\nRead existing description. Analize any issues and fix the formatting and description. NEVER OUTPUT original text.\n\nExisting description:\n\n%s\n\n", prompt, strings.TrimSpace(string(existingContent)))
 	} else if mode == ModeCheck {
 		// Read existing description
 		existingContent, err := os.ReadFile(txtPath)

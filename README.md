@@ -49,7 +49,7 @@ Before using ClassiGo, ensure you have:
 ### Command Syntax
 
 ```bash
-classigo [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]
+classigo [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
 ```
 
 **Flags:**
@@ -62,6 +62,7 @@ classigo [--add | --update | --create | --check] [--seed N] [--server URL] <mode
 **Options:**
 - `--seed N` - Random seed for LLM (default: 42)
 - `--server URL` - Ollama server URL with port (e.g., `http://localhost:11434`)
+- `--timeout N` - Response timeout for Ollama in seconds (default: 0 = no timeout)
 
 **Parameters:**
 - `<model-name>` - Name of the Ollama vision model to use (e.g., `glm4-v-flash`)
@@ -272,6 +273,22 @@ You can also combine this with other flags:
 ```
 
 **Note:** The server URL must include the protocol (`http://` or `https://`) and port number.
+
+### Setting a Timeout
+
+By default, ClassiGo waits indefinitely for Ollama to respond. To set a timeout (useful for preventing hanging on slow models or network issues), use the `--timeout` flag:
+
+```bash
+./classigo --timeout 60 glm4-v-flash ./prompt.txt ./images
+```
+
+This will timeout after 60 seconds if the model doesn't respond. You can combine this with other flags:
+
+```bash
+./classigo --timeout 120 --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images
+```
+
+**Note:** If a timeout occurs, the error will be reported and ClassiGo will continue processing the next image.
 
 ### Customizing Prompts
 
