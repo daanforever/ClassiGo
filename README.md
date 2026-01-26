@@ -49,13 +49,19 @@ Before using ClassiGo, ensure you have:
 ### Command Syntax
 
 ```bash
-classigo [--add | --update] <model-name> <prompt-file> [directory]
+classigo [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]
 ```
 
 **Flags:**
 - `--add` - Append new description to existing txt files (skip images without txt files)
 - `--update` - Update existing descriptions using LLM (skip images without txt files)
+- `--create` - Create description files only when txt file doesn't exist
+- `--check` - Check existing descriptions using LLM (skip images without txt files)
 - (no flag) - Create/overwrite description files (default behavior)
+
+**Options:**
+- `--seed N` - Random seed for LLM (default: 42)
+- `--server URL` - Ollama server URL with port (e.g., `http://localhost:11434`)
 
 **Parameters:**
 - `<model-name>` - Name of the Ollama vision model to use (e.g., `glm4-v-flash`)
@@ -250,6 +256,22 @@ Make sure the model is installed in Ollama:
 ```bash
 ollama pull llava
 ```
+
+### Connecting to a Remote Ollama Server
+
+By default, ClassiGo connects to Ollama on `localhost:11434`. To connect to a different server (e.g., a remote machine or custom port), use the `--server` flag:
+
+```bash
+./classigo --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images
+```
+
+You can also combine this with other flags:
+
+```bash
+./classigo --server http://192.168.1.100:11434 --add glm4-v-flash ./prompt.txt ./images
+```
+
+**Note:** The server URL must include the protocol (`http://` or `https://`) and port number.
 
 ### Customizing Prompts
 

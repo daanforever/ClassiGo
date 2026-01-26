@@ -60,8 +60,19 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 ### Basic usage
 ```powershell
-.\classigo.exe <model-name> <prompt-file> [directory]
+.\classigo.exe [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]
 ```
+
+### Flags
+- `--add` - Append new description to existing txt files (skip if file doesn't exist)
+- `--update` - Update existing descriptions using LLM (skip if file doesn't exist)
+- `--create` - Create description files only when txt file doesn't exist
+- `--check` - Check existing descriptions using LLM and output feedback to stdout
+- (no flag) - Create/overwrite description files (default behavior)
+
+### Options
+- `--seed N` - Random seed for LLM (default: 42)
+- `--server URL` - Ollama server URL with port (e.g., http://localhost:11434)
 
 ### Parameters
 - `<model-name>` - Name of the Ollama vision model (e.g., glm4-v-flash)
@@ -78,6 +89,15 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 # Use custom prompt file
 .\classigo.exe llava .\custom_prompt.txt .\photos
+
+# Connect to remote Ollama server
+.\classigo.exe --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
+
+# Use add mode with custom server
+.\classigo.exe --add --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
+
+# Use custom seed
+.\classigo.exe --seed 123 glm4-v-flash .\prompt.txt .\images
 ```
 
 ## Project Structure

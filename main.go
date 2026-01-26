@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,7 @@ const (
 	ModeAdd                           // Append to existing txt files
 	ModeUpdate                        // Update existing descriptions
 	ModeCreate                        // Create txt files only if they don't exist
+	ModeCheck                         // Check existing descriptions
 )
 
 // Supported image extensions
@@ -38,7 +41,9 @@ func main() {
 	addMode := flag.Bool("add", false, "Append new description to existing txt files (skip if file doesn't exist)")
 	updateMode := flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)")
 	createMode := flag.Bool("create", false, "Create description files only when txt file doesn't exist")
+	checkMode := flag.Bool("check", false, "Check existing descriptions using LLM and output feedback to stdout")
 	seed := flag.Int("seed", 42, "Random seed for LLM (default: 42)")
+	server := flag.String("server", "", "Ollama server URL with port (e.g., http://localhost:11434)")
 	flag.Parse()
 
 	// Validate flags are mutually exclusive
@@ -52,8 +57,11 @@ func main() {
 	if *createMode {
 		modesCount++
 	}
+	if *checkMode {
+		modesCount++
+	}
 	if modesCount > 1 {
-		log.Fatalf("Error: --add, --update, and --create flags cannot be used together")
+		log.Fatalf("Error: --add, --update, --create, and --check flags cannot be used together")
 	}
 
 	// Determine processing mode
@@ -64,22 +72,29 @@ func main() {
 		mode = ModeUpdate
 	} else if *createMode {
 		mode = ModeCreate
+	} else if *checkMode {
+		mode = ModeCheck
 	}
 
 	// Parse positional arguments
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create] [--seed N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create | --check] [--seed N] [--server URL] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
 		fmt.Fprintf(os.Stderr, "Modes:\n")
 		fmt.Fprintf(os.Stderr, "  (default)  Create/overwrite description files\n")
 		fmt.Fprintf(os.Stderr, "  --add      Append new description to existing txt files (skip if file doesn't exist)\n")
 		fmt.Fprintf(os.Stderr, "  --update   Update existing descriptions using LLM (skip if file doesn't exist)\n")
-		fmt.Fprintf(os.Stderr, "  --create   Create description files only when txt file doesn't exist\n\n")
-		fmt.Fprintf(os.Stderr, "Seed:\n")
-		fmt.Fprintf(os.Stderr, "  --seed N  Random seed for LLM (default: 42)\n\n")
-		fmt.Fprintf(os.Stderr, "Example: %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "Example: %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "Example: %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  --create   Create description files only when txt file doesn't exist\n")
+		fmt.Fprintf(os.Stderr, "  --check    Check existing descriptions using LLM (skip if file doesn't exist)\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "  --seed N       Random seed for LLM (default: 42)\n")
+		fmt.Fprintf(os.Stderr, "  --server URL   Ollama server URL with port (e.g., http://localhost:11434)\n\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --check glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "  %s --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 		os.Exit(1)
 	}
 
@@ -121,14 +136,29 @@ func main() {
 		fmt.Printf("Mode: Update existing descriptions\n\n")
 	case ModeCreate:
 		fmt.Printf("Mode: Create only when txt file doesn't exist\n\n")
+	case ModeCheck:
+		fmt.Printf("Mode: Check existing descriptions\n\n")
 	default:
 		fmt.Printf("Mode: Create/overwrite descriptions\n\n")
 	}
 
 	// Initialize Ollama client
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		log.Fatalf("Failed to create Ollama client: %v\nMake sure Ollama is installed and running.", err)
+	var client *api.Client
+	
+	if *server != "" {
+		// Use custom server URL
+		serverURL, err := url.Parse(*server)
+		if err != nil {
+			log.Fatalf("Invalid server URL '%s': %v", *server, err)
+		}
+		client = api.NewClient(serverURL, http.DefaultClient)
+	} else {
+		// Use default environment-based configuration
+		var err error
+		client, err = api.ClientFromEnvironment()
+		if err != nil {
+			log.Fatalf("Failed to create Ollama client: %v\nMake sure Ollama is installed and running.", err)
+		}
 	}
 
 	// Scan directory for image files
@@ -149,7 +179,7 @@ func main() {
 	}
 
 	// Filter images based on mode
-	if mode == ModeAdd || mode == ModeUpdate {
+	if mode == ModeAdd || mode == ModeUpdate || mode == ModeCheck {
 		filteredFiles := []string{}
 		skippedCount := 0
 		for _, filename := range imageFiles {
@@ -194,7 +224,7 @@ func main() {
 	}
 
 	if len(imageFiles) == 0 {
-		if mode == ModeAdd || mode == ModeUpdate {
+		if mode == ModeAdd || mode == ModeUpdate || mode == ModeCheck {
 			fmt.Println("No image files with existing txt files found in the directory.")
 		} else if mode == ModeCreate {
 			fmt.Println("No image files without existing txt files found in the directory.")
@@ -255,7 +285,16 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Modify prompt to include existing description as context
-		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nUpdate, improve and format the above description.", prompt, strings.TrimSpace(string(existingContent)))
+		finalPrompt = fmt.Sprintf("%s\n\nRead a text bellow. Analize any issues and edit the text. NEVER OUTPUT original text.\n\n%s\n\n", prompt, strings.TrimSpace(string(existingContent)))
+	} else if mode == ModeCheck {
+		// Read existing description
+		existingContent, err := os.ReadFile(txtPath)
+		if err != nil {
+			return fmt.Errorf("failed to read existing txt file: %w", err)
+		}
+
+		// Modify prompt to ask LLM to check the description
+		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nAnalyze the description and identify any issues. Report only issues or 'No issues found'", prompt, strings.TrimSpace(string(existingContent)))
 	}
 
 	// Prepare request
@@ -342,6 +381,16 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 
 		elapsed := time.Since(startTime).Seconds()
 		fmt.Printf("  ✓ Updated: %s (%.2f sec)\n", filepath.Base(txtPath), elapsed)
+
+	case ModeCheck:
+		// Output check results to stdout
+		elapsed := time.Since(startTime).Seconds()
+		fmt.Printf("  ✓ Checked: %s (%.2f sec)\n", filepath.Base(txtPath), elapsed)
+		fmt.Printf("\n%s\n", strings.Repeat("-", 70))
+		fmt.Printf("File: %s\n", filepath.Base(imagePath))
+		fmt.Printf("%s\n", strings.Repeat("-", 70))
+		fmt.Printf("%s\n", response.String())
+		fmt.Printf("%s\n", strings.Repeat("-", 70))
 
 	default: // ModeDefault
 		// Create or truncate output file
