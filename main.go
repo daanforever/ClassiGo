@@ -28,13 +28,25 @@ const (
 
 // Config holds the application configuration
 type Config struct {
-	Mode      ProcessingMode
-	ModelName string
-	Prompt    string
-	Directory string
-	Seed      int
-	ServerURL string
-	Timeout   int
+	Mode       ProcessingMode
+	JoinString string // For ModeAdd: separator between old and new content
+	ModelName  string
+	Prompt     string
+	Directory  string
+	Seed       int
+	ServerURL  string
+	Timeout    int
+}
+
+// programFlags holds all command-line flag pointers
+type programFlags struct {
+	addMode    *string
+	updateMode *bool
+	createMode *bool
+	checkMode  *bool
+	seed       *int
+	server     *string
+	timeout    *int
 }
 
 // Supported image extensions
@@ -80,87 +92,146 @@ func createOllamaClient(serverURL string, timeoutSecs int) (*api.Client, error) 
 	return client, nil
 }
 
-// parseConfig parses command-line flags and arguments, returning a Config struct
-func parseConfig() (*Config, error) {
-	// Define flags
-	addMode := flag.Bool("add", false, "Append new description to existing txt files (skip if file doesn't exist)")
-	updateMode := flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)")
-	createMode := flag.Bool("create", false, "Create description files only when txt file doesn't exist")
-	checkMode := flag.Bool("check", false, "Check existing descriptions using LLM and output feedback to stdout")
-	seed := flag.Int("seed", 42, "Random seed for LLM (default: 42)")
-	server := flag.String("server", "", "Ollama server URL with port (e.g., http://localhost:11434)")
-	timeout := flag.Int("timeout", 0, "Response timeout for Ollama in seconds (default: 0 = no timeout)")
-	flag.Parse()
+// defineProgramFlags defines all command-line flags and returns pointers
+func defineProgramFlags() *programFlags {
+	return &programFlags{
+		addMode:    flag.String("add", "", "Append new description to existing txt files with specified join string (e.g., \"\\n\" for newline)"),
+		updateMode: flag.Bool("update", false, "Update existing descriptions using LLM (skip if file doesn't exist)"),
+		createMode: flag.Bool("create", false, "Create description files only when txt file doesn't exist"),
+		checkMode:  flag.Bool("check", false, "Check existing descriptions using LLM and output feedback to stdout"),
+		seed:       flag.Int("seed", 42, "Random seed for LLM (default: 42)"),
+		server:     flag.String("server", "", "Ollama server URL with port (e.g., http://localhost:11434)"),
+		timeout:    flag.Int("timeout", 0, "Response timeout for Ollama in seconds (default: 0 = no timeout)"),
+	}
+}
 
-	// Validate flags are mutually exclusive
+// unescapeJoinString processes escape sequences in the join string
+func unescapeJoinString(s string) string {
+	s = strings.ReplaceAll(s, "\\n", "\n")
+	s = strings.ReplaceAll(s, "\\t", "\t")
+	s = strings.ReplaceAll(s, "\\r", "\r")
+	s = strings.ReplaceAll(s, "\\\\", "\\")
+	return s
+}
+
+// validateModeFlags validates mutual exclusivity of mode flags and returns the selected mode
+func validateModeFlags(flags *programFlags) (ProcessingMode, string, error) {
+	// Count how many mode flags are set
 	modesCount := 0
-	if *addMode {
+	if *flags.addMode != "" {
 		modesCount++
 	}
-	if *updateMode {
+	if *flags.updateMode {
 		modesCount++
 	}
-	if *createMode {
+	if *flags.createMode {
 		modesCount++
 	}
-	if *checkMode {
+	if *flags.checkMode {
 		modesCount++
-	}
-	if modesCount > 1 {
-		return nil, fmt.Errorf("--add, --update, --create, and --check flags cannot be used together")
 	}
 
-	// Determine processing mode
+	if modesCount > 1 {
+		return ModeDefault, "", fmt.Errorf("--add, --update, --create, and --check flags cannot be used together")
+	}
+
+	// Determine processing mode and join string
 	mode := ModeDefault
-	if *addMode {
+	joinString := ""
+
+	if *flags.addMode != "" {
 		mode = ModeAdd
-	} else if *updateMode {
+		joinString = unescapeJoinString(*flags.addMode)
+	} else if *flags.updateMode {
 		mode = ModeUpdate
-	} else if *createMode {
+	} else if *flags.createMode {
 		mode = ModeCreate
-	} else if *checkMode {
+	} else if *flags.checkMode {
 		mode = ModeCheck
 	}
 
-	// Parse positional arguments
+	return mode, joinString, nil
+}
+
+// showUsage displays usage information and examples
+func showUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: %s [--add \"join\" | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Modes:\n")
+	fmt.Fprintf(os.Stderr, "  (default)       Create/overwrite description files\n")
+	fmt.Fprintf(os.Stderr, "  --add \"join\"    Append new description to existing txt files with specified join string\n")
+	fmt.Fprintf(os.Stderr, "                  Example: --add \"\\n\" for single newline, --add \"\\n\\n\" for double newline\n")
+	fmt.Fprintf(os.Stderr, "  --update        Update existing descriptions using LLM (skip if file doesn't exist)\n")
+	fmt.Fprintf(os.Stderr, "  --create        Create description files only when txt file doesn't exist\n")
+	fmt.Fprintf(os.Stderr, "  --check         Check existing descriptions using LLM (skip if file doesn't exist)\n\n")
+	fmt.Fprintf(os.Stderr, "Options:\n")
+	fmt.Fprintf(os.Stderr, "  --seed N        Random seed for LLM (default: 42)\n")
+	fmt.Fprintf(os.Stderr, "  --server URL    Ollama server URL with port (e.g., http://localhost:11434)\n")
+	fmt.Fprintf(os.Stderr, "  --timeout N     Response timeout for Ollama in seconds (default: 0 = no timeout)\n\n")
+	fmt.Fprintf(os.Stderr, "Examples:\n")
+	fmt.Fprintf(os.Stderr, "  %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --add \"\\n\" glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --add \"\\n\\n\" glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --check glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --timeout 60 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+}
+
+// parsePositionalArgs parses and validates positional arguments
+func parsePositionalArgs() (modelName, promptFile, directory string, err error) {
 	args := flag.Args()
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "Modes:\n")
-		fmt.Fprintf(os.Stderr, "  (default)  Create/overwrite description files\n")
-		fmt.Fprintf(os.Stderr, "  --add      Append new description to existing txt files (skip if file doesn't exist)\n")
-		fmt.Fprintf(os.Stderr, "  --update   Update existing descriptions using LLM (skip if file doesn't exist)\n")
-		fmt.Fprintf(os.Stderr, "  --create   Create description files only when txt file doesn't exist\n")
-		fmt.Fprintf(os.Stderr, "  --check    Check existing descriptions using LLM (skip if file doesn't exist)\n\n")
-		fmt.Fprintf(os.Stderr, "Options:\n")
-		fmt.Fprintf(os.Stderr, "  --seed N       Random seed for LLM (default: 42)\n")
-		fmt.Fprintf(os.Stderr, "  --server URL   Ollama server URL with port (e.g., http://localhost:11434)\n")
-		fmt.Fprintf(os.Stderr, "  --timeout N    Response timeout for Ollama in seconds (default: 0 = no timeout)\n\n")
-		fmt.Fprintf(os.Stderr, "Examples:\n")
-		fmt.Fprintf(os.Stderr, "  %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  %s --add glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  %s --check glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  %s --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  %s --timeout 60 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+		showUsage()
 		os.Exit(1)
 	}
 
-	modelName := args[0]
-	promptFile := args[1]
-	directory := "."
+	modelName = args[0]
+	promptFile = args[1]
+	directory = "."
 	if len(args) > 2 {
 		directory = args[2]
 	}
 
-	// Read prompt from file
+	return modelName, promptFile, directory, nil
+}
+
+// readPromptFile reads and validates prompt file content
+func readPromptFile(promptFile string) (string, error) {
 	promptData, err := os.ReadFile(promptFile)
 	if err != nil {
-		return nil, fmt.Errorf("error reading prompt file '%s': %w", promptFile, err)
+		return "", fmt.Errorf("error reading prompt file '%s': %w", promptFile, err)
 	}
+
 	prompt := strings.TrimSpace(string(promptData))
 	if prompt == "" {
-		return nil, fmt.Errorf("prompt file '%s' is empty", promptFile)
+		return "", fmt.Errorf("prompt file '%s' is empty", promptFile)
+	}
+
+	return prompt, nil
+}
+
+// parseConfig parses command-line flags and arguments, returning a Config struct
+func parseConfig() (*Config, error) {
+	// Define and parse flags
+	flags := defineProgramFlags()
+	flag.Parse()
+
+	// Validate mode flags and get processing mode
+	mode, joinString, err := validateModeFlags(flags)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse positional arguments
+	modelName, promptFile, directory, err := parsePositionalArgs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Read and validate prompt file
+	prompt, err := readPromptFile(promptFile)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate directory
@@ -173,16 +244,17 @@ func parseConfig() (*Config, error) {
 	}
 
 	// Get server URL
-	serverURL := getServerURL(*server)
+	serverURL := getServerURL(*flags.server)
 
 	return &Config{
-		Mode:      mode,
-		ModelName: modelName,
-		Prompt:    prompt,
-		Directory: directory,
-		Seed:      *seed,
-		ServerURL: serverURL,
-		Timeout:   *timeout,
+		Mode:       mode,
+		JoinString: joinString,
+		ModelName:  modelName,
+		Prompt:     prompt,
+		Directory:  directory,
+		Seed:       *flags.seed,
+		ServerURL:  serverURL,
+		Timeout:    *flags.timeout,
 	}, nil
 }
 
@@ -195,7 +267,11 @@ func displayProcessingInfo(config *Config) {
 	// Display mode
 	switch config.Mode {
 	case ModeAdd:
-		fmt.Printf("Mode: Append to existing descriptions\n\n")
+		// Show join string with visible escape sequences
+		displayJoin := strings.ReplaceAll(config.JoinString, "\n", "\\n")
+		displayJoin = strings.ReplaceAll(displayJoin, "\t", "\\t")
+		displayJoin = strings.ReplaceAll(displayJoin, "\r", "\\r")
+		fmt.Printf("Mode: Append to existing descriptions (join: \"%s\")\n\n", displayJoin)
 	case ModeUpdate:
 		fmt.Printf("Mode: Update existing descriptions\n\n")
 	case ModeCreate:
@@ -283,7 +359,7 @@ func processAllImages(client *api.Client, config *Config, imageFiles []string) (
 		imagePath := filepath.Join(config.Directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath, config.ModelName, config.Prompt, config.Mode, config.Seed); err != nil {
+		if err := processImage(client, imagePath, config.ModelName, config.Prompt, config.Mode, config.Seed, config.JoinString); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -349,7 +425,7 @@ func main() {
 	displaySummary(successCount, errorCount, len(imageFiles))
 }
 
-func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode, seed int) error {
+func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode, seed int, joinString string) error {
 	// Start timing
 	startTime := time.Now()
 
@@ -444,8 +520,8 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 			return fmt.Errorf("failed to open output file for appending: %w", err)
 		}
 
-		// Write separator and new description
-		_, err = outFile.WriteString("\n\n" + response.String())
+		// Write separator and new description using configurable join string
+		_, err = outFile.WriteString(joinString + response.String())
 		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to append to output file: %w", err)

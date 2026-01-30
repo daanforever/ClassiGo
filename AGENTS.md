@@ -60,11 +60,15 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 ### Basic usage
 ```powershell
-.\classigo.exe [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
+.\classigo.exe [--add "join" | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
 ```
 
 ### Flags
-- `--add` - Append new description to existing txt files (skip if file doesn't exist)
+- `--add "join"` - Append new description to existing txt files with specified join string (skip if file doesn't exist)
+  - Example: `--add "\n"` for single newline separator
+  - Example: `--add "\n\n"` for double newline separator (mimics old default behavior)
+  - Example: `--add " "` for space separator
+  - Supports escape sequences: `\n` (newline), `\t` (tab), `\r` (carriage return), `\\` (backslash)
 - `--update` - Update existing descriptions using LLM (skip if file doesn't exist)
 - `--create` - Create description files only when txt file doesn't exist
 - `--check` - Check existing descriptions using LLM and output feedback to stdout
@@ -94,8 +98,14 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 # Connect to remote Ollama server
 .\classigo.exe --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
 
-# Use add mode with custom server
-.\classigo.exe --add --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
+# Use add mode with single newline separator
+.\classigo.exe --add "\n" glm4-v-flash .\prompt.txt .\images
+
+# Use add mode with double newline separator (old default behavior)
+.\classigo.exe --add "\n\n" glm4-v-flash .\prompt.txt .\images
+
+# Use add mode with custom server and join string
+.\classigo.exe --add "\n" --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
 
 # Use custom seed
 .\classigo.exe --seed 123 glm4-v-flash .\prompt.txt .\images
