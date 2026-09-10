@@ -1,11 +1,11 @@
-# ClassiGo - Image Classifier using Ollama
+# ClassiGo - Image Classifier using Vision LLMs
 
-ClassiGo is a Go application that automatically generates descriptive text for images using Ollama's vision models. It processes all images in a directory and saves AI-generated descriptions to corresponding text files.
+ClassiGo is a Go application that automatically generates descriptive text for images using vision models. By default it talks to Ollama; with `--api openai` it can use any OpenAI-compatible chat completions server (e.g. LM Studio). It processes all images in a directory and saves AI-generated descriptions to corresponding text files.
 
 ## Features
 
 - 🖼️ Processes multiple image formats (JPG, JPEG, PNG, GIF, BMP, WEBP)
-- 🤖 Uses Ollama's vision models for image description
+- 🤖 Supports Ollama (default) and OpenAI-compatible `/v1/chat/completions` APIs
 - 📝 Saves descriptions to `.txt` files alongside images
 - 🔄 Three processing modes: create, append, and update
 - ⚡ Batch processing with progress tracking
@@ -19,12 +19,12 @@ Before using ClassiGo, ensure you have:
 1. **Go** (version 1.21 or higher)
    - Download from: https://golang.org/dl/
 
-2. **Ollama** installed and running
-   - Download from: https://ollama.ai/
-   - Install the required model:
+2. An LLM backend:
+   - **Ollama** (default) installed and running — https://ollama.ai/
      ```bash
      ollama pull glm4-v-flash
      ```
+   - Or an **OpenAI-compatible** server (e.g. LM Studio) with a vision model loaded
 
 ## Installation
 
@@ -49,7 +49,7 @@ Before using ClassiGo, ensure you have:
 ### Command Syntax
 
 ```bash
-classigo [--add | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
+classigo [--add | --update | --create | --check] [--api ollama|openai] [--seed N] [--server URL] [--timeout N] [--text-only] <model-name> <prompt-file> [directory]
 ```
 
 **Flags:**
@@ -60,12 +60,14 @@ classigo [--add | --update | --create | --check] [--seed N] [--server URL] [--ti
 - (no flag) - Create/overwrite description files (default behavior)
 
 **Options:**
+- `--api NAME` - LLM API backend: `ollama` (default) or `openai` (OpenAI-compatible chat completions)
 - `--seed N` - Random seed for LLM (default: 42)
-- `--server URL` - Ollama server URL with port (e.g., `http://localhost:11434`)
-- `--timeout N` - Response timeout for Ollama in seconds (default: 0 = no timeout)
+- `--server URL` - LLM server origin with port (e.g., `http://localhost:11434`). Do **not** append `/v1/...`; for OpenAI the client adds `/v1/chat/completions`. If omitted, uses `OLLAMA_HOST` or `http://127.0.0.1:11434`
+- `--timeout N` - Response timeout for LLM in seconds (default: 0 = no timeout)
+- `--text-only` - Do not send image data to the model (text-only request). Useful with `--update` or `--check`; in default/create/add modes the model cannot see the image pixels
 
 **Parameters:**
-- `<model-name>` - Name of the Ollama vision model to use (e.g., `glm4-v-flash`)
+- `<model-name>` - Name of the vision model to use (e.g., `glm4-v-flash`)
 - `<prompt-file>` - Path to a text file containing the prompt for image description
 - `[directory]` - (Optional) Directory containing images. Defaults to current directory if not specified
 
@@ -258,9 +260,9 @@ Make sure the model is installed in Ollama:
 ollama pull llava
 ```
 
-### Connecting to a Remote Ollama Server
+### Connecting to a Remote Server
 
-By default, ClassiGo connects to Ollama on `localhost:11434`. To connect to a different server (e.g., a remote machine or custom port), use the `--server` flag:
+By default, ClassiGo connects to `localhost:11434` (Ollama). To connect to a different server (e.g., a remote machine or custom port), use the `--server` flag:
 
 ```bash
 ./classigo --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images
@@ -272,11 +274,21 @@ You can also combine this with other flags:
 ./classigo --server http://192.168.1.100:11434 --add glm4-v-flash ./prompt.txt ./images
 ```
 
-**Note:** The server URL must include the protocol (`http://` or `https://`) and port number.
+**Note:** The server URL must include the protocol (`http://` or `https://`) and port number. Pass the **origin only** (no `/v1/chat/completions` or other path suffix).
+
+### Using an OpenAI-Compatible API
+
+With `--api openai`, ClassiGo sends `POST {server}/v1/chat/completions` (no API key). Use this with LM Studio, vLLM, LocalAI, or similar:
+
+```bash
+./classigo --api openai --server http://192.168.1.45:1234 my-vision-model ./prompt.txt ./images
+```
+
+If `--server` is omitted, the same default / `OLLAMA_HOST` resolution applies (usually you want an explicit `--server` for OpenAI backends).
 
 ### Setting a Timeout
 
-By default, ClassiGo waits indefinitely for Ollama to respond. To set a timeout (useful for preventing hanging on slow models or network issues), use the `--timeout` flag:
+By default, ClassiGo waits indefinitely for the LLM to respond. To set a timeout (useful for preventing hanging on slow models or network issues), use the `--timeout` flag:
 
 ```bash
 ./classigo --timeout 60 glm4-v-flash ./prompt.txt ./images
@@ -333,23 +345,29 @@ var imageExtensions = map[string]bool{
 ### "go: command not found"
 Install Go from https://golang.org/dl/
 
-### "Failed to create Ollama client"
-- Make sure Ollama is installed and running
-- Check that the Ollama service is accessible (default: http://localhost:11434)
+### "Failed to create LLM client"
+- Make sure the backend is running (Ollama, or your OpenAI-compatible server)
+- Check that `--server` points at the correct origin (default: http://127.0.0.1:11434)
 
 ### "failed to generate description"
-- Ensure the `glm4-v-flash` model is installed: `ollama pull glm4-v-flash`
-- Check that Ollama has enough resources to run the model
+- Ensure the model is available on the server (e.g. `ollama pull glm4-v-flash`)
+- For `--api openai`, confirm the server exposes `/v1/chat/completions` and the model supports vision if you send images
 - Verify the image file is not corrupted
 
 ## Project Structure
 
 ```
 ClassiGo/
-├── go.mod           # Go module definition
-├── go.sum           # Dependency checksums
-├── main.go          # Main application code
-└── README.md        # This file
+├── go.mod              # Go module definition
+├── go.sum              # Dependency checksums
+├── main.go             # CLI, modes, file processing
+├── generator.go        # Shared LLM interface and helpers
+├── ollama.go           # Ollama backend
+├── openai.go           # OpenAI-compatible backend
+├── main_test.go        # File/directory tests
+├── generator_test.go   # API/MIME/URL/request-shape tests
+├── AGENTS.md           # Instructions for AI agents
+└── README.md           # This file
 ```
 
 ## License

@@ -5,14 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/ollama/ollama/api"
 )
 
 // ProcessingMode represents how images should be processed
@@ -36,6 +32,8 @@ type Config struct {
 	Seed       int
 	ServerURL  string
 	Timeout    int
+	TextOnly   bool
+	API        string
 }
 
 // programFlags holds all command-line flag pointers
@@ -47,6 +45,8 @@ type programFlags struct {
 	seed       *int
 	server     *string
 	timeout    *int
+	textOnly   *bool
+	api        *string
 }
 
 // Supported image extensions
@@ -59,7 +59,7 @@ var imageExtensions = map[string]bool{
 	".webp": true,
 }
 
-// getServerURL resolves the Ollama server URL from custom flag or environment
+// getServerURL resolves the LLM server URL from custom flag or environment
 func getServerURL(customServer string) string {
 	if customServer != "" {
 		return customServer
@@ -73,25 +73,6 @@ func getServerURL(customServer string) string {
 	return ollamaHost
 }
 
-// createOllamaClient initializes an Ollama client with the specified server and timeout
-func createOllamaClient(serverURL string, timeoutSecs int) (*api.Client, error) {
-	// Create HTTP client with timeout if specified
-	httpClient := &http.Client{}
-	if timeoutSecs > 0 {
-		httpClient.Timeout = time.Duration(timeoutSecs) * time.Second
-	}
-
-	// Parse server URL
-	baseURL, err := url.Parse(serverURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid server URL '%s': %w", serverURL, err)
-	}
-
-	// Create and return client
-	client := api.NewClient(baseURL, httpClient)
-	return client, nil
-}
-
 // defineProgramFlags defines all command-line flags and returns pointers
 func defineProgramFlags() *programFlags {
 	return &programFlags{
@@ -100,8 +81,10 @@ func defineProgramFlags() *programFlags {
 		createMode: flag.Bool("create", false, "Create description files only when txt file doesn't exist"),
 		checkMode:  flag.Bool("check", false, "Check existing descriptions using LLM and output feedback to stdout"),
 		seed:       flag.Int("seed", 42, "Random seed for LLM (default: 42)"),
-		server:     flag.String("server", "", "Ollama server URL with port (e.g., http://localhost:11434)"),
-		timeout:    flag.Int("timeout", 0, "Response timeout for Ollama in seconds (default: 0 = no timeout)"),
+		server:     flag.String("server", "", "LLM server URL with port (e.g., http://localhost:11434)"),
+		timeout:    flag.Int("timeout", 0, "Response timeout for LLM in seconds (default: 0 = no timeout)"),
+		textOnly:   flag.Bool("text-only", false, "Do not send image data to the model (text-only request)"),
+		api:        flag.String("api", "ollama", "LLM API backend: ollama (default) or openai"),
 	}
 }
 
@@ -155,7 +138,7 @@ func validateModeFlags(flags *programFlags) (ProcessingMode, string, error) {
 
 // showUsage displays usage information and examples
 func showUsage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s [--add \"join\" | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Usage: %s [--add \"join\" | --update | --create | --check] [--api ollama|openai] [--seed N] [--server URL] [--timeout N] [--text-only] <model-name> <prompt-file> [directory]\n\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "Modes:\n")
 	fmt.Fprintf(os.Stderr, "  (default)       Create/overwrite description files\n")
 	fmt.Fprintf(os.Stderr, "  --add \"join\"    Append new description to existing txt files with specified join string\n")
@@ -164,9 +147,11 @@ func showUsage() {
 	fmt.Fprintf(os.Stderr, "  --create        Create description files only when txt file doesn't exist\n")
 	fmt.Fprintf(os.Stderr, "  --check         Check existing descriptions using LLM (skip if file doesn't exist)\n\n")
 	fmt.Fprintf(os.Stderr, "Options:\n")
+	fmt.Fprintf(os.Stderr, "  --api NAME      LLM API backend: ollama (default) or openai\n")
 	fmt.Fprintf(os.Stderr, "  --seed N        Random seed for LLM (default: 42)\n")
-	fmt.Fprintf(os.Stderr, "  --server URL    Ollama server URL with port (e.g., http://localhost:11434)\n")
-	fmt.Fprintf(os.Stderr, "  --timeout N     Response timeout for Ollama in seconds (default: 0 = no timeout)\n\n")
+	fmt.Fprintf(os.Stderr, "  --server URL    LLM server origin with port (e.g., http://localhost:11434); do not append /v1/...\n")
+	fmt.Fprintf(os.Stderr, "  --timeout N     Response timeout for LLM in seconds (default: 0 = no timeout)\n")
+	fmt.Fprintf(os.Stderr, "  --text-only     Do not send image data to the model (text-only request)\n\n")
 	fmt.Fprintf(os.Stderr, "Examples:\n")
 	fmt.Fprintf(os.Stderr, "  %s glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "  %s --add \"\\n\" glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
@@ -174,7 +159,9 @@ func showUsage() {
 	fmt.Fprintf(os.Stderr, "  %s --create glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "  %s --check glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "  %s --server http://192.168.1.100:11434 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --api openai --server http://192.168.1.45:1234 my-model ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "  %s --timeout 60 glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --text-only --update glm4-v-flash ./prompt.txt ./images\n", filepath.Base(os.Args[0]))
 }
 
 // parsePositionalArgs parses and validates positional arguments
@@ -222,6 +209,11 @@ func parseConfig() (*Config, error) {
 		return nil, err
 	}
 
+	apiName, err := validateAPI(*flags.api)
+	if err != nil {
+		return nil, err
+	}
+
 	// Parse positional arguments
 	modelName, promptFile, directory, err := parsePositionalArgs()
 	if err != nil {
@@ -255,14 +247,20 @@ func parseConfig() (*Config, error) {
 		Seed:       *flags.seed,
 		ServerURL:  serverURL,
 		Timeout:    *flags.timeout,
+		TextOnly:   *flags.textOnly,
+		API:        apiName,
 	}, nil
 }
 
 // displayProcessingInfo displays configuration information to the user
 func displayProcessingInfo(config *Config) {
+	fmt.Printf("Using API: %s\n", config.API)
 	fmt.Printf("Using model: %s\n", config.ModelName)
 	fmt.Printf("Using prompt: %s\n", config.Prompt)
 	fmt.Printf("Processing images in directory: %s\n", config.Directory)
+	if config.TextOnly {
+		fmt.Printf("Text-only: image data not sent to model\n")
+	}
 
 	// Display mode
 	switch config.Mode {
@@ -352,14 +350,14 @@ func findImageFiles(directory string, mode ProcessingMode) ([]string, error) {
 }
 
 // processAllImages processes all image files and returns success/error counts
-func processAllImages(client *api.Client, config *Config, imageFiles []string) (successCount, errorCount int) {
+func processAllImages(gen generator, config *Config, imageFiles []string) (successCount, errorCount int) {
 	for i, filename := range imageFiles {
 		fmt.Printf("[%d/%d] Processing: %s...\n", i+1, len(imageFiles), filename)
 
 		imagePath := filepath.Join(config.Directory, filename)
 
 		// Process the image
-		if err := processImage(client, imagePath, config.ModelName, config.Prompt, config.Mode, config.Seed, config.JoinString); err != nil {
+		if err := processImage(gen, imagePath, config); err != nil {
 			fmt.Printf("  ❌ Error: %v\n", err)
 			errorCount++
 		} else {
@@ -399,10 +397,10 @@ func main() {
 	// Display processing info
 	displayProcessingInfo(config)
 
-	// Initialize Ollama client
-	client, err := createOllamaClient(config.ServerURL, config.Timeout)
+	// Initialize LLM client
+	gen, err := createGenerator(config)
 	if err != nil {
-		log.Fatalf("Failed to create Ollama client: %v\nMake sure Ollama is installed and running.", err)
+		log.Fatalf("Failed to create LLM client: %v", err)
 	}
 
 	// Find images to process
@@ -419,20 +417,25 @@ func main() {
 	fmt.Printf("Found %d image(s) to process.\n\n", len(imageFiles))
 
 	// Process all images
-	successCount, errorCount := processAllImages(client, config, imageFiles)
+	successCount, errorCount := processAllImages(gen, config, imageFiles)
 
 	// Display summary
 	displaySummary(successCount, errorCount, len(imageFiles))
 }
 
-func processImage(client *api.Client, imagePath string, modelName string, prompt string, mode ProcessingMode, seed int, joinString string) error {
+func processImage(gen generator, imagePath string, config *Config) error {
 	// Start timing
 	startTime := time.Now()
 
-	// Read image file
-	imgData, err := os.ReadFile(imagePath)
-	if err != nil {
-		return fmt.Errorf("failed to read image: %w", err)
+	var imageData []byte
+	var mediaType string
+	if !config.TextOnly {
+		imgData, err := os.ReadFile(imagePath)
+		if err != nil {
+			return fmt.Errorf("failed to read image: %w", err)
+		}
+		imageData = imgData
+		mediaType = imageMediaType(filepath.Ext(imagePath))
 	}
 
 	// Prepare output file path
@@ -440,8 +443,8 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 	txtPath := strings.TrimSuffix(imagePath, ext) + ".txt"
 
 	// Prepare the prompt based on mode
-	finalPrompt := prompt
-	if mode == ModeUpdate {
+	finalPrompt := config.Prompt
+	if config.Mode == ModeUpdate {
 		// Read existing description
 		existingContent, err := os.ReadFile(txtPath)
 		if err != nil {
@@ -449,8 +452,8 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Modify prompt to include existing description as context
-		finalPrompt = fmt.Sprintf("%s\n\nRead existing description. Analize any issues and fix the formatting and description. NEVER OUTPUT original text.\n\nExisting description:\n\n%s\n\n", prompt, strings.TrimSpace(string(existingContent)))
-	} else if mode == ModeCheck {
+		finalPrompt = fmt.Sprintf("%s\n\nRead existing description. Analize any issues and fix the formatting and description. NEVER OUTPUT original text.\n\nExisting description:\n\n%s\n\n", config.Prompt, strings.TrimSpace(string(existingContent)))
+	} else if config.Mode == ModeCheck {
 		// Read existing description
 		existingContent, err := os.ReadFile(txtPath)
 		if err != nil {
@@ -458,46 +461,25 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Modify prompt to ask LLM to check the description
-		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nAnalyze the description and identify any issues. Report only issues or 'No issues found'", prompt, strings.TrimSpace(string(existingContent)))
+		finalPrompt = fmt.Sprintf("%s\n\nExisting description:\n%s\n\nAnalyze the description and identify any issues. Report only issues or 'No issues found'", config.Prompt, strings.TrimSpace(string(existingContent)))
 	}
 
-	// Prepare request
-	req := &api.GenerateRequest{
-		Model:  modelName,
-		Prompt: finalPrompt,
-		Images: []api.ImageData{imgData},
-		Options: map[string]interface{}{
-			"seed": seed,
-		},
-	}
-
-	// Call Ollama API with retry logic for empty responses
+	// Call LLM API with retry logic for empty responses
 	ctx := context.Background()
-	var response strings.Builder
+	var responseText string
 	maxAttempts := 2
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Reset response for each attempt
-		response.Reset()
-
-		respFunc := func(resp api.GenerateResponse) error {
-			response.WriteString(resp.Response)
-			return nil
-		}
-
-		err = client.Generate(ctx, req, respFunc)
+		text, err := gen.Generate(ctx, config.ModelName, finalPrompt, imageData, mediaType, config.Seed)
 		if err != nil {
 			return fmt.Errorf("failed to generate description: %w", err)
 		}
 
-		// Check if response is empty
-		responseText := strings.TrimSpace(response.String())
-		if responseText != "" {
-			// Success - got a non-empty response
+		responseText = text
+		if strings.TrimSpace(responseText) != "" {
 			break
 		}
 
-		// Empty response received
 		if attempt < maxAttempts {
 			fmt.Printf("  ⚠ Empty response received, retrying...\n")
 		} else {
@@ -506,13 +488,13 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 	}
 
 	// Final validation: ensure response is not empty
-	finalResponse := strings.TrimSpace(response.String())
+	finalResponse := strings.TrimSpace(responseText)
 	if finalResponse == "" {
 		return fmt.Errorf("cannot write file: response is empty")
 	}
 
 	// Write response based on mode
-	switch mode {
+	switch config.Mode {
 	case ModeAdd:
 		// Open file in append mode
 		outFile, err := os.OpenFile(txtPath, os.O_APPEND|os.O_WRONLY, 0644)
@@ -521,7 +503,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		}
 
 		// Write separator and new description using configurable join string
-		_, err = outFile.WriteString(joinString + response.String())
+		_, err = outFile.WriteString(config.JoinString + responseText)
 		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to append to output file: %w", err)
@@ -537,7 +519,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
 
-		_, err = outFile.WriteString(response.String())
+		_, err = outFile.WriteString(responseText)
 		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to write to output file: %w", err)
@@ -553,7 +535,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 		fmt.Printf("\n%s\n", strings.Repeat("-", 70))
 		fmt.Printf("File: %s\n", filepath.Base(imagePath))
 		fmt.Printf("%s\n", strings.Repeat("-", 70))
-		fmt.Printf("%s\n", response.String())
+		fmt.Printf("%s\n", responseText)
 		fmt.Printf("%s\n", strings.Repeat("-", 70))
 
 	default: // ModeDefault
@@ -563,7 +545,7 @@ func processImage(client *api.Client, imagePath string, modelName string, prompt
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
 
-		_, err = outFile.WriteString(response.String())
+		_, err = outFile.WriteString(responseText)
 		outFile.Close() // Close immediately after writing
 		if err != nil {
 			return fmt.Errorf("failed to write to output file: %w", err)

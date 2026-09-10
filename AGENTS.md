@@ -1,7 +1,7 @@
 # ClassiGo - Instructions for AI Agents
 
 ## Project Overview
-ClassiGo is a command-line tool written in Go for automatic generation of text descriptions of images using vision models through the Ollama API.
+ClassiGo is a command-line tool written in Go for automatic generation of text descriptions of images using vision models. The default backend is the Ollama API; `--api openai` uses an OpenAI-compatible `/v1/chat/completions` endpoint.
 
 ## Running Tests
 
@@ -23,6 +23,12 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 - `TestOutputFileNaming` - output file naming generation check
 - `TestCreateAndReadFile` - file creation and reading check
 - `TestScanDirectory` - directory scanning check
+- `TestValidateAPI` - `--api` flag validation
+- `TestChatCompletionsURL` - OpenAI chat completions URL join
+- `TestImageMediaType` - image MIME type mapping
+- `TestBuildOpenAIChatRequestTextOnly` - OpenAI text-only request shape
+- `TestBuildOpenAIChatRequestWithImage` - OpenAI image data-URL request shape
+- `TestBuildOpenAIChatRequestSeedZero` - seed 0 is not omitted from JSON
 
 ## Building the Application
 
@@ -60,7 +66,7 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 ### Basic usage
 ```powershell
-.\classigo.exe [--add "join" | --update | --create | --check] [--seed N] [--server URL] [--timeout N] <model-name> <prompt-file> [directory]
+.\classigo.exe [--add "join" | --update | --create | --check] [--api ollama|openai] [--seed N] [--server URL] [--timeout N] [--text-only] <model-name> <prompt-file> [directory]
 ```
 
 ### Flags
@@ -75,12 +81,14 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 - (no flag) - Create/overwrite description files (default behavior)
 
 ### Options
+- `--api NAME` - LLM API backend: `ollama` (default) or `openai`
 - `--seed N` - Random seed for LLM (default: 42)
-- `--server URL` - Ollama server URL with port (e.g., http://localhost:11434)
-- `--timeout N` - Response timeout for Ollama in seconds (default: 0 = no timeout)
+- `--server URL` - LLM server origin with port (e.g., http://localhost:11434). Do not append `/v1/...`. If omitted, uses `OLLAMA_HOST` or `http://127.0.0.1:11434`
+- `--timeout N` - Response timeout for LLM in seconds (default: 0 = no timeout)
+- `--text-only` - Do not send image data to the model (text-only request). Best with `--update` or `--check`
 
 ### Parameters
-- `<model-name>` - Name of the Ollama vision model (e.g., glm4-v-flash)
+- `<model-name>` - Name of the vision model (e.g., glm4-v-flash)
 - `<prompt-file>` - Path to text file containing the prompt for image description
 - `[directory]` - (Optional) Directory with images, defaults to current directory
 
@@ -97,6 +105,9 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 # Connect to remote Ollama server
 .\classigo.exe --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
+
+# OpenAI-compatible API (e.g. LM Studio)
+.\classigo.exe --api openai --server http://192.168.1.45:1234 my-vision-model .\prompt.txt .\images
 
 # Use add mode with single newline separator
 .\classigo.exe --add "\n" glm4-v-flash .\prompt.txt .\images
@@ -115,14 +126,22 @@ $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";"
 
 # Combine timeout with other flags
 .\classigo.exe --timeout 120 --server http://192.168.1.100:11434 glm4-v-flash .\prompt.txt .\images
+
+# Text-only request (no image bytes sent to model)
+.\classigo.exe --text-only --update glm4-v-flash .\prompt.txt .\images
+.\classigo.exe --text-only --check glm4-v-flash .\prompt.txt .\images
 ```
 
 ## Project Structure
 
 ```
 ClassiGo/
-├── main.go           # Main application code
-├── main_test.go      # Tests
+├── main.go           # CLI, modes, file processing
+├── generator.go      # Shared LLM interface and helpers
+├── ollama.go         # Ollama backend
+├── openai.go         # OpenAI-compatible backend
+├── main_test.go      # File/directory tests
+├── generator_test.go # API/MIME/URL/request-shape tests
 ├── go.mod            # Go dependencies
 ├── go.sum            # Dependency checksums
 ├── README.md         # User documentation
@@ -135,10 +154,10 @@ ClassiGo/
 ### System requirements
 - Go 1.25.6 or newer
 - Windows (PowerShell)
-- Ollama installed and running
+- Ollama (default backend) or an OpenAI-compatible server
 
 ### Go dependencies
-- `github.com/ollama/ollama/api` - Ollama API client
+- `github.com/ollama/ollama/api` - Ollama API client (default backend)
 
 ### Supported image formats
 - `.jpg`, `.jpeg`
